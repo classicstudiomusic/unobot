@@ -110,9 +110,20 @@ client.on('interactionCreate', async (interaction) => {
       const cur = game.getCurrentPlayer();
       if (interaction.user.id !== cur.id) return interaction.reply({ content: '❌ Bukan giliran kamu!', ephemeral: true });
       const drawn = game.drawCard(cur);
-      await interaction.reply({ content: `🃏 **${cur.name}** ambil kartu: **${drawn.toString()}**` });
+      await interaction.reply({ content: `🃏 Kamu ambil: **${drawn.toString()}**`, ephemeral: true });
+      await interaction.channel.send(`🎲 **${cur.name}** mengambil 1 kartu.`);
       game.nextTurn();
       return sendGameState(game, interaction.channel);
+    }
+
+    if (id === 'uno_catch') {
+      if (!game?.started) return interaction.reply({ content: '❌ Tidak ada game aktif.', ephemeral: true });
+      const target = game.players.find(p => p.hand.length === 1 && !p.saidUno);
+      if (!target) return interaction.reply({ content: '❌ Tidak ada yang bisa ditangkap!', ephemeral: true });
+      if (target.id === interaction.user.id) return interaction.reply({ content: '❌ Tidak bisa menangkap diri sendiri!', ephemeral: true });
+      game.drawCard(target);
+      game.drawCard(target);
+      return interaction.reply({ content: `🫵 **${interaction.user.username}** menangkap **${target.name}** yang lupa teriak UNO!\n💀 **${target.name}** kena hukuman ambil **2 kartu!**` });
     }
 
     if (id === 'uno_play') {
