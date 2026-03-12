@@ -1,7 +1,7 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
 const { UnoGame } = require('./game');
-const { recordGameEnd, getLeaderboard, getPlayerStats, ensurePlayer, getRank, getNextRank } = require('./db');
+const { initDb, recordGameEnd, getLeaderboard, getPlayerStats, ensurePlayer, getRank, getNextRank } = require('./db');
 
 const client = new Client({
   intents: [
@@ -55,9 +55,39 @@ client.on('messageCreate', async (message) => {
       const game = games.get(channelId);
       if (!game) return message.reply('❌ Tidak ada game.');
       if (!game.hasPlayer(message.author.id)) return message.reply('❌ Kamu tidak dalam game ini.');
+
+      const leavingName = message.author.username;
       game.removePlayer(message.author.id);
-      if (game.players.length === 0) { games.delete(channelId); return message.channel.send('🗑️ Game dibatalkan.'); }
-      return message.channel.send(`👋 **${message.author.username}** keluar.`);
+
+      // Kalau game belum mulai
+      if (!game.started) {
+        if (game.players.length === 0) { games.delete(channelId); return message.channel.send('🗑️ Game dibatalkan.'); }
+        return message.channel.send(`👋 **${leavingName}** keluar dari lobby.`);
+      }
+
+      // Kalau game sudah berjalan
+      await message.channel.send(`🚪 **${leavingName}** keluar dari game!`);
+
+      // Kalau tinggal 1 pemain → menang otomatis
+      if (game.players.length === 1) {
+        const winner = game.players[0];
+        const pts = recordGameEnd(winner, [...game.players, { id: message.author.id, name: leavingName, hand: [], saidUno: false }]);
+        games.delete(channelId);
+        return message.channel.send({ embeds: [winEmbed(winner, pts, true)] });
+      }
+
+      // Kalau tinggal 0 (semua leave)
+      if (game.players.length === 0) {
+        games.delete(channelId);
+        return message.channel.send('🗑️ Semua pemain keluar. Game berakhir.');
+      }
+
+      // Kalau yang leave adalah giliran sekarang, skip ke berikutnya
+      if (game.currentIndex >= game.players.length) {
+        game.currentIndex = 0;
+      }
+
+      return sendGameState(game, message.channel);
     }
 
     if (sub === 'stop') {
@@ -197,19 +227,29 @@ async function sendGameState(game, channel) {
   await channel.send({ embeds: [game.gameStateEmbed()], components: [game.gameButtons()] });
 }
 
-function winEmbed(winner, pointResults) {
+function winEmbed(winner, pointResults, walkover = false) {
   const wr = pointResults.find(r => r.isWinner);
+  if (!wr) return new EmbedBuilder().setTitle('🏆 Game Selesai').setColor('#FFD700').setDescription(`**${winner.name}** menang!`);
   const others = pointResults.filter(r => !r.isWinner);
   const bk = wr.breakdown;
   const rank = getRank(wr.totalPoints);
   const next = getNextRank(wr.totalPoints);
 
+  const title = walkover ? '🏆 SEMUA PEMAIN KELUAR!' : '🏆 GAME SELESAI!';
+  const desc = walkover
+    ? `# 🎉 **${winner.name}** menang karena semua lawan keluar!\n**Rank:** ${rank.name}`
+    : `# 🎉 **${winner.name}** MENANG!\n**Rank:** ${rank.name}`;
+
+  const pointBreakdown = bk
+    ? `🏆 Menang: +${bk.base} pts\n🃏 Nilai kartu sisa lawan: +${bk.cardValue} pts${bk.uno > 0 ? \`\n🔴 UNO bonus: +\${bk.uno} pts\` : ''}\n\n**Total: +${wr.pointsGained} → ${wr.totalPoints} pts**`
+    : `**+${wr.pointsGained} pts → ${wr.totalPoints} pts total**`;
+
   return new EmbedBuilder()
-    .setTitle('🏆 GAME SELESAI!')
+    .setTitle(title)
     .setColor('#FFD700')
-    .setDescription(`# 🎉 **${winner.name}** MENANG!\n**Rank:** ${rank.name}`)
+    .setDescription(desc)
     .addFields(
-      { name: `✨ Poin ${winner.name}`, value: `🏆 Menang: +${bk.base} pts\n🃏 Kartu sisa lawan: +${bk.cards} pts${bk.uno > 0 ? `\n🔴 UNO bonus: +${bk.uno} pts` : ''}\n\n**Total: +${wr.pointsGained} → ${wr.totalPoints} pts**` },
+      { name: `✨ Poin ${winner.name}`, value: pointBreakdown },
       { name: '👥 Pemain Lain', value: others.map(r => `${r.name}: +${r.pointsGained} pts (total: ${r.totalPoints})`).join('\n') || '-' },
       { name: '📈 Progress', value: next ? `Menuju ${next.name}: ${wr.totalPoints}/${next.min} pts` : '👑 Rank Maksimal!' }
     ).setTimestamp();
@@ -270,4 +310,14 @@ function helpEmbed() {
 
 const TOKEN = process.env.DISCORD_TOKEN;
 if (!TOKEN) { console.error('❌ Set DISCORD_TOKEN di file .env'); process.exit(1); }
-client.login(TOKEN);
+
+// Inisialisasi database dulu, baru login
+initDb()
+  .then(() => {
+    console.log('✅ Database siap!');
+    return client.login(TOKEN);
+  })
+  .catch(err => {
+    console.error('❌ Gagal inisialisasi:', err);
+    process.exit(1);
+  });
