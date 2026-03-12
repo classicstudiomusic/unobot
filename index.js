@@ -241,7 +241,7 @@ function winEmbed(winner, pointResults, walkover = false) {
     : `# 🎉 **${winner.name}** MENANG!\n**Rank:** ${rank.name}`;
 
   const pointBreakdown = bk
-    ? `🏆 Menang: +${bk.base} pts\n🃏 Nilai kartu sisa lawan: +${bk.cardValue} pts${bk.uno > 0 ? \`\n🔴 UNO bonus: +\${bk.uno} pts\` : ''}\n\n**Total: +${wr.pointsGained} → ${wr.totalPoints} pts**`
+    ? `🏆 Menang: +${bk.base} pts\n🃏 Nilai kartu sisa lawan: +${bk.cardValue} pts` + (bk.uno > 0 ? `\n🔴 UNO bonus: +${bk.uno} pts` : '') + `\n\n**Total: +${wr.pointsGained} → ${wr.totalPoints} pts**`
     : `**+${wr.pointsGained} pts → ${wr.totalPoints} pts total**`;
 
   return new EmbedBuilder()
