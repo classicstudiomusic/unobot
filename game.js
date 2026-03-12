@@ -40,7 +40,8 @@ class Card {
 
     if (this.type === 'wild' || this.type === 'wild4') return true;
     if (myColor === topColor) return true;
-    if (this.value === topCard.value) return true;
+    // Same value/type (e.g. both Skip, both Reverse, both Draw2, or same number)
+    if (this.value === topCard.value && this.type === topCard.type) return true;
     return false;
   }
 }
@@ -267,11 +268,19 @@ class UnoGame {
   }
 
   gameButtons() {
-    return new ActionRowBuilder().addComponents(
+    // Check if anyone is catchable (1 card, hasn't said UNO)
+    const catchable = this.players.find(p => p.hand.length === 1 && !p.saidUno);
+    const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('uno_play').setLabel('🃏 Play Kartu').setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId('uno_draw').setLabel('🎲 Ambil Kartu').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId('uno_shout').setLabel('🔴 UNO!').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId('uno_catch')
+        .setLabel(catchable ? `🫵 Tangkap ${catchable.name}!` : '🫵 Tangkap UNO')
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(!catchable),
     );
+    return row;
   }
 
   handEmbed(player) {
