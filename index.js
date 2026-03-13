@@ -1,6 +1,6 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
-const { UnoGame } = require('./game');
+const { UnoGame, BOT_ID } = require('./game');
 const { initDb, recordGameEnd, getLeaderboard, getPlayerStats, ensurePlayer, getRank, getNextRank } = require('./db');
 
 const client = new Client({
@@ -15,7 +15,7 @@ const games = new Map();
 
 client.once('ready', () => {
   console.log(`✅ Bot ${client.user.tag} sudah online!`);
-  client.user.setActivity('🃏 UNO by Lx | !uno help');
+  client.user.setActivity('🃏 UNO | !uno help');
 });
 
 client.on('messageCreate', async (message) => {
@@ -36,6 +36,16 @@ client.on('messageCreate', async (message) => {
       const game = new UnoGame(message.channel);
       games.set(channelId, game);
       game.addPlayer(message.author);
+      ensurePlayer(message.author.id, message.author.username);
+      return message.channel.send({ embeds: [game.lobbyEmbed()], components: [game.lobbyButtons()] });
+    }
+
+    if (sub === 'solo' || sub === 'bot') {
+      if (games.has(channelId)) return message.reply('❌ Sudah ada game aktif di channel ini!');
+      const game = new UnoGame(message.channel);
+      games.set(channelId, game);
+      game.addPlayer(message.author);
+      game.addBot();
       ensurePlayer(message.author.id, message.author.username);
       return message.channel.send({ embeds: [game.lobbyEmbed()], components: [game.lobbyButtons()] });
     }
@@ -129,7 +139,11 @@ client.on('interactionCreate', async (interaction) => {
     if (id === 'uno_begin') {
       if (!game) return interaction.reply({ content: '❌ Game tidak ditemukan.', ephemeral: true });
       if (game.players[0].id !== interaction.user.id) return interaction.reply({ content: '❌ Hanya host!', ephemeral: true });
-      if (game.players.length < 2) return interaction.reply({ content: '❌ Minimal 2 pemain!', ephemeral: true });
+      // Kalau sendirian, otomatis tambah bot
+      if (game.players.length === 1) {
+        game.addBot();
+        await interaction.channel.send('🤖 Tidak ada lawan, **UNO Bot** ikut main!');
+      }
       await game.startGame();
       await interaction.update({ embeds: [game.lobbyEmbed()], components: [] });
       return sendGameState(game, interaction.channel);
@@ -225,6 +239,50 @@ client.on('interactionCreate', async (interaction) => {
 
 async function sendGameState(game, channel) {
   await channel.send({ embeds: [game.gameStateEmbed()], components: [game.gameButtons()] });
+  // Kalau giliran bot, jalankan otomatis setelah 2 detik
+  const cur = game.getCurrentPlayer();
+  if (cur && cur.isBot) {
+    setTimeout(() => runBotTurn(game, channel), 2000);
+  }
+}
+
+async function runBotTurn(game, channel) {
+  if (!game.started) return;
+  const bot = game.getCurrentPlayer();
+  if (!bot || !bot.isBot) return;
+
+  const card = game.botChooseCard();
+
+  if (!card) {
+    // Bot ambil kartu
+    const drawn = game.drawCard(bot);
+    await channel.send(`🤖 **${bot.name}** mengambil 1 kartu.`);
+    game.nextTurn();
+    return sendGameState(game, channel);
+  }
+
+  // Bot pilih warna kalau wild
+  if (card.type === 'wild' || card.type === 'wild4') {
+    card.chosenColor = game.botChooseColor();
+  }
+
+  // Bot teriak UNO kalau tinggal 2 kartu (setelah main jadi 1)
+  if (bot.hand.length === 2) {
+    bot.saidUno = true;
+    await channel.send(`🤖 **${bot.name}**: *UNO!* 🔴`);
+  }
+
+  const result = game.playCard(bot, card);
+  await channel.send(`🤖 ${result.message}`);
+
+  if (result.winner) {
+    const pts = recordGameEnd(result.winner, game.players);
+    // Hapus bot dari players sebelum save (bot tidak perlu di-record)
+    games.delete(channel.id);
+    return channel.send({ embeds: [winEmbed(result.winner, pts)] });
+  }
+
+  return sendGameState(game, channel);
 }
 
 function winEmbed(winner, pointResults, walkover = false) {
@@ -301,7 +359,7 @@ function helpEmbed() {
     .setTitle('🃏 UNO Bot — Panduan')
     .setColor('#FF6B35')
     .addFields(
-      { name: '🟢 Game', value: '`!uno start` `!uno join` `!uno hand` `!uno leave` `!uno stop`' },
+      { name: '🟢 Game', value: '`!uno start` — mulai game\n`!uno solo` — lawan bot AI\n`!uno join` `!uno hand` `!uno leave` `!uno stop`' },
       { name: '🏆 Ranking', value: '`!uno rank` — profil kamu\n`!uno rank @user` — profil orang lain\n`!uno leaderboard` / `!uno top` — top 10' },
       { name: '⭐ Poin', value: '🏆 Menang: **+100**\n🃏 +5 per kartu sisa lawan\n🔴 UNO bonus: **+20**\n👤 Ikut main: **+10**' },
       { name: '🎖️ Rank', value: '🥉 Pemula → ⚔️ Petarung → 🥈 Ahli → 🥇 Master → 💎 Legend → 👑 UNO King' }
