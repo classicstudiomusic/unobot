@@ -78,12 +78,15 @@ function shuffle(array) {
   return array;
 }
 
+const BOT_ID = 'UNO_BOT_AI';
+
 class Player {
   constructor(user) {
     this.id = user.id;
     this.name = user.username;
     this.hand = [];
     this.saidUno = false;
+    this.isBot = user.isBot || false;
   }
 }
 
@@ -101,6 +104,40 @@ class UnoGame {
 
   addPlayer(user) {
     this.players.push(new Player(user));
+  }
+
+  addBot() {
+    this.players.push(new Player({ id: BOT_ID, username: '🤖 UNO Bot', isBot: true }));
+  }
+
+  // Bot AI: pilih kartu terbaik untuk dimainkan
+  botChooseCard() {
+    const bot = this.getCurrentPlayer();
+    const playable = this.getPlayableCards(bot);
+    if (playable.length === 0) return null;
+
+    // Prioritas: Wild+4 > Draw2 > Skip/Reverse > Wild > angka tertinggi
+    const priority = (card) => {
+      if (card.type === 'wild4')  return 6;
+      if (card.value === 'draw2') return 5;
+      if (card.value === 'skip')  return 4;
+      if (card.value === 'reverse') return 3;
+      if (card.type === 'wild')   return 2;
+      return 1 + (Number(card.value) || 0) / 10;
+    };
+
+    playable.sort((a, b) => priority(b) - priority(a));
+    return playable[0];
+  }
+
+  // Bot pilih warna: warna terbanyak di tangan
+  botChooseColor() {
+    const bot = this.getCurrentPlayer();
+    const counts = { red: 0, yellow: 0, green: 0, blue: 0 };
+    for (const c of bot.hand) {
+      if (counts[c.color] !== undefined) counts[c.color]++;
+    }
+    return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
   }
 
   removePlayer(userId) {
@@ -305,4 +342,4 @@ class UnoGame {
   }
 }
 
-module.exports = { UnoGame };
+module.exports = { UnoGame, BOT_ID };
