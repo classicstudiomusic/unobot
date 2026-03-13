@@ -1,7 +1,7 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
 const { UnoGame, BOT_ID } = require('./game');
-const { initDb, recordGameEnd, getLeaderboard, getPlayerStats, ensurePlayer, getRank, getNextRank } = require('./db');
+const { initDb, recordGameEnd, getLeaderboard, getServerLeaderboard, getPlayerStats, ensurePlayer, getRank, getNextRank } = require('./db');
 
 const client = new Client({
   intents: [
@@ -15,7 +15,7 @@ const games = new Map();
 
 client.once('ready', () => {
   console.log(`✅ Bot ${client.user.tag} sudah online!`);
-  client.user.setActivity('🃏 UNO | !uno help');
+  client.user.setActivity('🃏 UNO by Lx | !uno help');
 });
 
 client.on('messageCreate', async (message) => {
@@ -36,7 +36,7 @@ client.on('messageCreate', async (message) => {
       const game = new UnoGame(message.channel);
       games.set(channelId, game);
       game.addPlayer(message.author);
-      ensurePlayer(message.author.id, message.author.username);
+      ensurePlayer(message.author.id, message.author.username, message.guild?.id);
       return message.channel.send({ embeds: [game.lobbyEmbed()], components: [game.lobbyButtons()] });
     }
 
@@ -57,7 +57,7 @@ client.on('messageCreate', async (message) => {
       if (game.hasPlayer(message.author.id)) return message.reply('❌ Kamu sudah join!');
       if (game.players.length >= 10) return message.reply('❌ Game penuh!');
       game.addPlayer(message.author);
-      ensurePlayer(message.author.id, message.author.username);
+      ensurePlayer(message.author.id, message.author.username, message.guild?.id);
       return message.channel.send({ embeds: [game.lobbyEmbed()], components: [game.lobbyButtons()] });
     }
 
@@ -81,7 +81,7 @@ client.on('messageCreate', async (message) => {
       // Kalau tinggal 1 pemain → menang otomatis
       if (game.players.length === 1) {
         const winner = game.players[0];
-        const pts = recordGameEnd(winner, [...game.players, { id: message.author.id, name: leavingName, hand: [], saidUno: false }]);
+        const pts = recordGameEnd(winner, [...game.players, { id: message.author.id, name: leavingName, hand: [], saidUno: false }], message.guild?.id);
         games.delete(channelId);
         return message.channel.send({ embeds: [winEmbed(winner, pts, true)] });
       }
@@ -118,13 +118,22 @@ client.on('messageCreate', async (message) => {
 
     if (sub === 'rank' || sub === 'ranking' || sub === 'profil') {
       const target = message.mentions.users.first() || message.author;
-      const stats = getPlayerStats(target.id);
-      if (!stats) return message.channel.send(`❌ **${target.username}** belum pernah main UNO!`);
+      const stats = getPlayerStats(target.id, message.guild?.id);
+      if (!stats.global) return message.channel.send(`❌ **${target.username}** belum pernah main UNO!`);
       return message.channel.send({ embeds: [profileEmbed(stats, target)] });
     }
 
     if (sub === 'leaderboard' || sub === 'lb' || sub === 'top') {
-      return message.channel.send({ embeds: [leaderboardEmbed(getLeaderboard(10))] });
+      const scope = args[2]?.toLowerCase();
+      if (scope === 'global') {
+        return message.channel.send({ embeds: [leaderboardEmbed(getLeaderboard(10), false)] });
+      }
+      // Default: server leaderboard
+      const serverBoard = getServerLeaderboard(message.guild?.id, 10);
+      const embed = serverBoard.length
+        ? leaderboardEmbed(serverBoard, true, message.guild?.name)
+        : leaderboardEmbed(getLeaderboard(10), false);
+      return message.channel.send({ embeds: [embed] });
     }
   }
 });
@@ -199,7 +208,7 @@ client.on('interactionCreate', async (interaction) => {
       const result = game.playCard(player, card);
       await interaction.channel.send(result.message);
       if (result.winner) {
-        const pts = recordGameEnd(result.winner, game.players);
+        const pts = recordGameEnd(result.winner, game.players, interaction.guild?.id);
         games.delete(channelId);
         return interaction.channel.send({ embeds: [winEmbed(result.winner, pts)] });
       }
@@ -229,7 +238,7 @@ client.on('interactionCreate', async (interaction) => {
     const result = game.playCard(cur, card);
     await interaction.channel.send(result.message);
     if (result.winner) {
-      const pts = recordGameEnd(result.winner, game.players);
+      const pts = recordGameEnd(result.winner, game.players, interaction.guild?.id);
       games.delete(channelId);
       return interaction.channel.send({ embeds: [winEmbed(result.winner, pts)] });
     }
@@ -313,44 +322,73 @@ function winEmbed(winner, pointResults, walkover = false) {
     ).setTimestamp();
 }
 
-function profileEmbed(stats, user) {
-  const rank = getRank(stats.points);
-  const next = getNextRank(stats.points);
-  const winRate = stats.games_played > 0 ? ((stats.wins / stats.games_played) * 100).toFixed(1) : '0';
-  let bar = '';
-  if (next) {
-    const ranks = [0, 200, 500, 1000, 2000, 5000];
-    const prevMin = ranks.filter(r => r <= stats.points && r < next.min).pop() || 0;
-    const filled = Math.min(10, Math.floor(((stats.points - prevMin) / (next.min - prevMin)) * 10));
-    bar = `\`[${'█'.repeat(filled)}${'░'.repeat(10-filled)}]\` ${stats.points}/${next.min} pts`;
-  }
-  return new EmbedBuilder()
-    .setTitle(`🃏 Profil — ${user.username}`)
-    .setColor(0xFF6B35)
-    .setThumbnail(user.displayAvatarURL())
-    .addFields(
-      { name: '🏅 Rank', value: rank.name, inline: true },
-      { name: '⭐ Total Poin', value: `${stats.points.toLocaleString()} pts`, inline: true },
-      { name: '\u200B', value: '\u200B', inline: true },
-      { name: '🏆 Menang', value: `${stats.wins}`, inline: true },
-      { name: '🎮 Total Game', value: `${stats.games_played}`, inline: true },
-      { name: '📊 Win Rate', value: `${winRate}%`, inline: true },
-      ...(next ? [{ name: `📈 Menuju ${next.name}`, value: bar }] : [{ name: '👑', value: 'Rank Tertinggi!' }])
-    );
+function progressBar(points, next) {
+  if (!next) return '👑 Rank Tertinggi!';
+  const allMins = [0, 200, 500, 1000, 2000, 5000];
+  const prevMin = allMins.filter(r => r <= points && r < next.min).pop() || 0;
+  const filled = Math.min(10, Math.floor(((points - prevMin) / (next.min - prevMin)) * 10));
+  return '[' + '█'.repeat(filled) + '░'.repeat(10 - filled) + '] ' + points + '/' + next.min + ' pts';
 }
 
-function leaderboardEmbed(board) {
+function profileEmbed(stats, user) {
+  const g = stats.global;
+  const s = stats.server;
+  const gRank = getRank(g.points);
+  const gNext = getNextRank(g.points);
+  const gWR = g.games_played > 0 ? ((g.wins / g.games_played) * 100).toFixed(1) : '0';
+
+  const fields = [
+    { name: '🌍 Rank Global', value: gRank.name, inline: true },
+    { name: '⭐ Poin Global', value: g.points.toLocaleString() + ' pts', inline: true },
+    { name: '📊 WR Global', value: gWR + '%', inline: true },
+    { name: '🏆 Total Menang', value: '' + g.wins, inline: true },
+    { name: '🎮 Total Game', value: '' + g.games_played, inline: true },
+    { name: '\u200B', value: '\u200B', inline: true },
+    { name: '📈 Progress Global', value: progressBar(g.points, gNext) },
+  ];
+
+  if (s) {
+    const sRank = getRank(s.points);
+    const sNext = getNextRank(s.points);
+    const sWR = s.games_played > 0 ? ((s.wins / s.games_played) * 100).toFixed(1) : '0';
+    fields.push(
+      { name: '🏠 Rank Server', value: sRank.name, inline: true },
+      { name: '⭐ Poin Server', value: s.points.toLocaleString() + ' pts', inline: true },
+      { name: '📊 WR Server', value: sWR + '%', inline: true },
+      { name: '📈 Progress Server', value: progressBar(s.points, sNext) }
+    );
+  }
+
+  return new EmbedBuilder()
+    .setTitle('🃏 Profil — ' + user.username)
+    .setColor(0xFF6B35)
+    .setThumbnail(user.displayAvatarURL())
+    .addFields(fields);
+}
+
+
+function leaderboardEmbed(board, isServer = false, serverName = '') {
   const medals = ['🥇', '🥈', '🥉'];
   const rows = board.map((p, i) => {
     const wr = p.games_played > 0 ? ((p.wins / p.games_played) * 100).toFixed(0) : '0';
-    return `${medals[i] || `**${i+1}.**`} **${p.username}** — ${p.points.toLocaleString()} pts ${getRank(p.points).name}\n　🏆 ${p.wins} menang | 🎮 ${p.games_played} game | ${wr}% WR`;
+    const medal = medals[i] || ('**' + (i+1) + '.**');
+    return medal + ' **' + p.username + '** — ' + p.points.toLocaleString() + ' pts ' + getRank(p.points).name + '\n　🏆 ' + p.wins + ' menang | 🎮 ' + p.games_played + ' game | ' + wr + '% WR';
   }).join('\n\n');
 
+  const title = isServer
+    ? '🏠 Leaderboard Server' + (serverName ? ' — ' + serverName : '')
+    : '🌍 Leaderboard Global';
+
+  const footer = isServer
+    ? 'Gunakan !uno top global untuk leaderboard global'
+    : 'Gunakan !uno top untuk leaderboard server';
+
   return new EmbedBuilder()
-    .setTitle('🏆 Leaderboard UNO')
-    .setColor('#FFD700')
+    .setTitle(title)
+    .setColor(isServer ? '#4488FF' : '#FFD700')
     .setDescription(rows || 'Belum ada data.')
-    .addFields({ name: '⭐ Sistem Poin', value: '🏆 Menang +100 | 🃏 +5/kartu sisa | 🔴 UNO +20 | 👤 Ikut main +10' })
+    .addFields({ name: '⭐ Sistem Poin', value: '🏆 Menang +100 | 🃏 nilai kartu sisa | 🔴 UNO +20 | 👤 Main +10' })
+    .setFooter({ text: footer })
     .setTimestamp();
 }
 
