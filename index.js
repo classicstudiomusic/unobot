@@ -83,6 +83,7 @@ client.on('messageCreate', async (message) => {
         const winner = game.players[0];
         const pts = recordGameEnd(winner, [...game.players, { id: message.author.id, name: leavingName, hand: [], saidUno: false }], message.guild?.id);
         games.delete(channelId);
+        clearTurnTimer(channelId);
         return message.channel.send({ embeds: [winEmbed(winner, pts, true)] });
       }
 
@@ -97,12 +98,13 @@ client.on('messageCreate', async (message) => {
         game.currentIndex = 0;
       }
 
-      return sendGameState(game, message.channel);
+      return sendGameState(game, message.channel, message.guild?.id);
     }
 
     if (sub === 'stop') {
       if (!games.has(channelId)) return message.reply('❌ Tidak ada game aktif.');
       games.delete(channelId);
+      clearTurnTimer(channelId);
       return message.channel.send('🛑 Game dihentikan!');
     }
 
@@ -155,18 +157,28 @@ client.on('interactionCreate', async (interaction) => {
       }
       await game.startGame();
       await interaction.update({ embeds: [game.lobbyEmbed()], components: [] });
-      return sendGameState(game, interaction.channel);
+      return sendGameState(game, interaction.channel, interaction.guild?.id);
     }
 
     if (id === 'uno_draw') {
       if (!game?.started) return interaction.reply({ content: '❌ Tidak ada game aktif.', ephemeral: true });
       const cur = game.getCurrentPlayer();
       if (interaction.user.id !== cur.id) return interaction.reply({ content: '❌ Bukan giliran kamu!', ephemeral: true });
-      const drawn = game.drawCard(cur);
-      await interaction.reply({ content: `🃏 Kamu ambil: **${drawn.toString()}**`, ephemeral: true });
-      await interaction.channel.send(`🎲 **${cur.name}** mengambil 1 kartu.`);
-      game.nextTurn();
-      return sendGameState(game, interaction.channel);
+
+      clearTurnTimer(interaction.channelId);
+
+      if (game.stackCount > 0) {
+        // Ambil semua kartu yang di-stack
+        const total = game.forceDrawStack(cur);
+        await interaction.reply({ content: `🎲 Kamu ambil **${total} kartu** karena stack!`, ephemeral: true });
+        await interaction.channel.send(`🎲 **${cur.name}** menyerah dan ambil **${total} kartu**!`);
+      } else {
+        const drawn = game.drawCard(cur);
+        await interaction.reply({ content: `🃏 Kamu ambil: **${drawn.toString()}**`, ephemeral: true });
+        await interaction.channel.send(`🎲 **${cur.name}** mengambil 1 kartu.`);
+        game.nextTurn();
+      }
+      return sendGameState(game, interaction.channel, interaction.guild?.id);
     }
 
     if (id === 'uno_catch') {
@@ -184,7 +196,10 @@ client.on('interactionCreate', async (interaction) => {
       const cur = game.getCurrentPlayer();
       if (interaction.user.id !== cur.id) return interaction.reply({ content: '❌ Bukan giliran kamu!', ephemeral: true });
       const playable = game.getPlayableCards(cur);
-      if (!playable.length) return interaction.reply({ content: '❌ Tidak ada kartu yang bisa dimainkan!', ephemeral: true });
+      if (!playable.length) {
+        if (game.stackCount > 0) return interaction.reply({ content: `❌ Kamu tidak punya kartu untuk stack! Tekan **Ambil +${game.stackCount}** untuk ambil kartu.`, ephemeral: true });
+        return interaction.reply({ content: '❌ Tidak ada kartu yang bisa dimainkan!', ephemeral: true });
+      }
       const select = new StringSelectMenuBuilder().setCustomId('uno_select_card').setPlaceholder('Pilih kartu...')
         .addOptions(playable.map((c, i) => ({ label: c.toString(), value: `${i}`, emoji: c.emoji() })));
       return interaction.reply({ content: '🃏 Pilih kartu:', components: [new ActionRowBuilder().addComponents(select)], ephemeral: true });
@@ -212,7 +227,7 @@ client.on('interactionCreate', async (interaction) => {
         games.delete(channelId);
         return interaction.channel.send({ embeds: [winEmbed(result.winner, pts)] });
       }
-      return sendGameState(game, interaction.channel);
+      return sendGameState(game, interaction.channel, interaction.guild?.id);
     }
   }
 
@@ -240,58 +255,116 @@ client.on('interactionCreate', async (interaction) => {
     if (result.winner) {
       const pts = recordGameEnd(result.winner, game.players, interaction.guild?.id);
       games.delete(channelId);
+      clearTurnTimer(channelId);
       return interaction.channel.send({ embeds: [winEmbed(result.winner, pts)] });
     }
-    return sendGameState(game, interaction.channel);
+    return sendGameState(game, interaction.channel, interaction.guild?.id);
   }
 });
 
-async function sendGameState(game, channel) {
-  await channel.send({ embeds: [game.gameStateEmbed()], components: [game.gameButtons()] });
-  // Kalau giliran bot, jalankan otomatis setelah 2 detik
-  const cur = game.getCurrentPlayer();
-  if (cur && cur.isBot) {
-    setTimeout(() => runBotTurn(game, channel), 2000);
+// Map untuk menyimpan timer per channel
+const turnTimers = new Map();
+
+function clearTurnTimer(channelId) {
+  if (turnTimers.has(channelId)) {
+    clearTimeout(turnTimers.get(channelId));
+    turnTimers.delete(channelId);
   }
 }
 
-async function runBotTurn(game, channel) {
+async function sendGameState(game, channel, guildId) {
+  clearTurnTimer(channel.id);
+  const cur = game.getCurrentPlayer();
+  if (!cur) return;
+
+  // Tag player (bukan bot)
+  if (!cur.isBot) {
+    await channel.send(`<@${cur.id}> giliran kamu! ⏱️ 15 detik...`);
+  }
+
+  await channel.send({ embeds: [game.gameStateEmbed(15)], components: [game.gameButtons()] });
+
+  // Kalau giliran bot, jalankan setelah 2 detik
+  if (cur.isBot) {
+    const t = setTimeout(() => runBotTurn(game, channel, guildId), 2000);
+    turnTimers.set(channel.id, t);
+    return;
+  }
+
+  // Timer 15 detik untuk pemain manusia
+  let timeLeft = 15;
+  const t = setTimeout(async () => {
+    turnTimers.delete(channel.id);
+    if (!game.started) return;
+    const stillCurrent = game.getCurrentPlayer();
+    if (!stillCurrent || stillCurrent.id !== cur.id) return;
+
+    // Auto: kalau ada stack, ambil semua kartu stack
+    if (game.stackCount > 0) {
+      const total = game.forceDrawStack(stillCurrent);
+      await channel.send(`⏰ Waktu habis! **${cur.name}** otomatis ambil **${total} kartu**!`);
+    } else {
+      // Auto: ambil 1 kartu lalu skip
+      game.drawCard(stillCurrent);
+      game.nextTurn();
+      await channel.send(`⏰ Waktu habis! **${cur.name}** otomatis ambil 1 kartu dan diskip.`);
+    }
+
+    // Cek apakah game masih ada
+    if (!games.has(channel.id)) return;
+    return sendGameState(game, channel, guildId);
+  }, 15000);
+  turnTimers.set(channel.id, t);
+}
+
+async function runBotTurn(game, channel, guildId) {
   if (!game.started) return;
   const bot = game.getCurrentPlayer();
   if (!bot || !bot.isBot) return;
 
-  const card = game.botChooseCard();
+  // Bot handle stack
+  if (game.stackCount > 0) {
+    const card = game.botChooseCard();
+    if (card && (card.value === 'draw2' || card.type === 'wild4')) {
+      if (card.type === 'wild' || card.type === 'wild4') card.chosenColor = game.botChooseColor();
+      const result = game.playCard(bot, card);
+      await channel.send(`🤖 ${result.message}`);
+      if (result.winner) {
+        const pts = recordGameEnd(result.winner, game.players, guildId);
+        games.delete(channel.id);
+        clearTurnTimer(channel.id);
+        return channel.send({ embeds: [winEmbed(result.winner, pts)] });
+      }
+      return sendGameState(game, channel, guildId);
+    } else {
+      // Bot tidak bisa stack, kena hukuman
+      const total = game.forceDrawStack(bot);
+      await channel.send(`🤖 **${bot.name}** tidak bisa stack, ambil **${total} kartu**!`);
+      return sendGameState(game, channel, guildId);
+    }
+  }
 
+  const card = game.botChooseCard();
   if (!card) {
-    // Bot ambil kartu
-    const drawn = game.drawCard(bot);
+    game.drawCard(bot);
     await channel.send(`🤖 **${bot.name}** mengambil 1 kartu.`);
     game.nextTurn();
-    return sendGameState(game, channel);
+    return sendGameState(game, channel, guildId);
   }
 
-  // Bot pilih warna kalau wild
-  if (card.type === 'wild' || card.type === 'wild4') {
-    card.chosenColor = game.botChooseColor();
-  }
-
-  // Bot teriak UNO kalau tinggal 2 kartu (setelah main jadi 1)
-  if (bot.hand.length === 2) {
-    bot.saidUno = true;
-    await channel.send(`🤖 **${bot.name}**: *UNO!* 🔴`);
-  }
+  if (card.type === 'wild' || card.type === 'wild4') card.chosenColor = game.botChooseColor();
+  if (bot.hand.length === 2) { bot.saidUno = true; await channel.send(`🤖 **${bot.name}**: *UNO!* 🔴`); }
 
   const result = game.playCard(bot, card);
   await channel.send(`🤖 ${result.message}`);
 
   if (result.winner) {
-    const pts = recordGameEnd(result.winner, game.players);
-    // Hapus bot dari players sebelum save (bot tidak perlu di-record)
+    const pts = recordGameEnd(result.winner, game.players, guildId);
     games.delete(channel.id);
+    clearTurnTimer(channel.id);
     return channel.send({ embeds: [winEmbed(result.winner, pts)] });
   }
-
-  return sendGameState(game, channel);
+  return sendGameState(game, channel, guildId);
 }
 
 function winEmbed(winner, pointResults, walkover = false) {
