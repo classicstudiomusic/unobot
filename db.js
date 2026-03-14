@@ -2,7 +2,10 @@ const initSqlJs = require('sql.js');
 const fs = require('fs');
 const path = require('path');
 
-const DB_PATH = path.join(__dirname, 'uno_stats.bin');
+// Railway Volume: mount ke /data, kalau tidak ada pakai lokal
+const DB_PATH = process.env.RAILWAY_VOLUME_MOUNT_PATH
+  ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'uno_stats.bin')
+  : path.join(__dirname, 'uno_stats.bin');
 let db = null;
 
 async function initDb() {
