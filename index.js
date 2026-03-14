@@ -82,6 +82,7 @@ client.on('messageCreate', async (message) => {
       if (game.players.length === 1) {
         const winner = game.players[0];
         const pts = recordGameEnd(winner, [...game.players, { id: message.author.id, name: leavingName, hand: [], saidUno: false }], message.guild?.id);
+        game.started = false;
         games.delete(channelId);
         clearTurnTimer(channelId);
         return message.channel.send({ embeds: [winEmbed(winner, pts, true)] });
@@ -225,6 +226,7 @@ client.on('interactionCreate', async (interaction) => {
       if (result.winner) {
         const pts = recordGameEnd(result.winner, game.players, interaction.guild?.id);
         games.delete(channelId);
+        clearTurnTimer(channelId);
         return interaction.channel.send({ embeds: [winEmbed(result.winner, pts)] });
       }
       return sendGameState(game, interaction.channel, interaction.guild?.id);
@@ -254,6 +256,7 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.channel.send(result.message);
     if (result.winner) {
       const pts = recordGameEnd(result.winner, game.players, interaction.guild?.id);
+      game.started = false;
       games.delete(channelId);
       clearTurnTimer(channelId);
       return interaction.channel.send({ embeds: [winEmbed(result.winner, pts)] });
@@ -279,10 +282,10 @@ async function sendGameState(game, channel, guildId) {
 
   // Tag player (bukan bot)
   if (!cur.isBot) {
-    await channel.send(`<@${cur.id}> giliran kamu! ⏱️ 15 detik...`);
+    await channel.send(`<@${cur.id}> giliran kamu! ⏱️ 25 detik...`);
   }
 
-  await channel.send({ embeds: [game.gameStateEmbed(15)], components: [game.gameButtons()] });
+  await channel.send({ embeds: [game.gameStateEmbed(25)], components: [game.gameButtons()] });
 
   // Kalau giliran bot, jalankan setelah 2 detik
   if (cur.isBot) {
@@ -292,7 +295,7 @@ async function sendGameState(game, channel, guildId) {
   }
 
   // Timer 15 detik untuk pemain manusia
-  let timeLeft = 15;
+  let timeLeft = 25;
   const t = setTimeout(async () => {
     turnTimers.delete(channel.id);
     if (!game.started) return;
@@ -313,7 +316,7 @@ async function sendGameState(game, channel, guildId) {
     // Cek apakah game masih ada
     if (!games.has(channel.id)) return;
     return sendGameState(game, channel, guildId);
-  }, 15000);
+  }, 25000);
   turnTimers.set(channel.id, t);
 }
 
@@ -331,6 +334,8 @@ async function runBotTurn(game, channel, guildId) {
       await channel.send(`🤖 ${result.message}`);
       if (result.winner) {
         const pts = recordGameEnd(result.winner, game.players, guildId);
+        result.winner.game_started = false;
+        game.started = false;
         games.delete(channel.id);
         clearTurnTimer(channel.id);
         return channel.send({ embeds: [winEmbed(result.winner, pts)] });
