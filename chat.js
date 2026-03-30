@@ -74,7 +74,10 @@ async function chat(userId, username, message, botName = 'Vero') {
     }
 
     const data = await response.json();
-    const reply = data.choices?.[0]?.message?.content || '🤔 Gue bingung mau jawab apa...';
+    let reply = data.choices?.[0]?.message?.content || '🤔 Gue bingung mau jawab apa...';
+
+    // Hapus prefix [nama]: kalau bot ikut-ikutan format chat
+    reply = reply.replace(/^\[.*?\]:\s*/i, '').trim();
 
     addToHistory(userId, 'assistant', reply);
     return reply;
