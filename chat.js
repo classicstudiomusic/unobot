@@ -1,8 +1,8 @@
-// chat.js — Bot cerewet pakai Claude API
+// chat.js — Bot cerewet pakai Groq API (gratis!)
 
-const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
+const GROQ_API = 'https://api.groq.com/openai/v1/chat/completions';
 
-// Simpan riwayat chat per user (max 20 pesan biar tidak terlalu panjang)
+// Riwayat chat per user (max 20 pesan)
 const chatHistory = new Map();
 const MAX_HISTORY = 20;
 
@@ -28,7 +28,6 @@ function getHistory(userId) {
 function addToHistory(userId, role, content) {
   const history = getHistory(userId);
   history.push({ role, content });
-  // Batasi history
   if (history.length > MAX_HISTORY) {
     history.splice(0, history.length - MAX_HISTORY);
   }
@@ -39,48 +38,48 @@ function clearHistory(userId) {
 }
 
 async function chat(userId, username, message) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
-    return '❌ ANTHROPIC_API_KEY belum diset! Tambahkan di Railway Variables.';
+    return '❌ GROQ_API_KEY belum diset di Railway Variables!';
   }
 
-  // Tambah konteks username
   const userMessage = `[${username}]: ${message}`;
   addToHistory(userId, 'user', userMessage);
 
   const history = getHistory(userId);
 
   try {
-    const response = await fetch(ANTHROPIC_API, {
+    const response = await fetch(GROQ_API, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01'
+        'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
+        model: 'llama-3.1-8b-instant', // Model gratis, cepat
         max_tokens: 300,
-        system: SYSTEM_PROMPT,
-        messages: history
+        temperature: 0.9,
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          ...history
+        ]
       })
     });
 
     if (!response.ok) {
       const err = await response.json();
-      console.error('Anthropic API error:', err);
+      console.error('Groq API error:', JSON.stringify(err));
       return '😵 Aduh, otak gue lagi error nih. Coba lagi bentar ya!';
     }
 
     const data = await response.json();
-    const reply = data.content?.[0]?.text || '🤔 Gue bingung mau jawab apa...';
+    const reply = data.choices?.[0]?.message?.content || '🤔 Gue bingung mau jawab apa...';
 
-    // Simpan balasan ke history
     addToHistory(userId, 'assistant', reply);
-
     return reply;
+
   } catch (e) {
-    console.error('Chat error:', e);
+    console.error('Chat error:', e.message);
     return '😵 Koneksi gue lagi gangguan nih. Coba lagi ya!';
   }
 }
