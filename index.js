@@ -22,24 +22,37 @@ client.once('ready', () => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  // ── Bot cerewet: aktif kalau di-mention ──────────────────────
+  // ── Bot cerewet: aktif kalau di-mention ATAU nimbrung random ──
   const isMentioned = message.mentions.has(client.user);
-  if (isMentioned) {
+  const shouldNimbrung = !isMentioned && Math.random() < 0.5; // 50% chance nimbrung
+
+  if (isMentioned || shouldNimbrung) {
     // Hapus mention dari pesan
     const text = message.content.replace(/<@!?\d+>/g, '').trim();
+    if (!text) return;
 
-    // Perintah reset memori
-    if (text.toLowerCase() === 'reset' || text.toLowerCase() === 'lupa') {
+    // Perintah reset memori (hanya kalau di-mention)
+    if (isMentioned && (text.toLowerCase() === 'reset' || text.toLowerCase() === 'lupa')) {
       clearHistory(message.author.id);
-      return message.reply('🧹 Oke, gue udah lupa semua yang kita obrolin. Fresh start!');
+      return message.reply('🧹 Oke gue lupa deh semua obrolan kita. Fresh start!');
     }
-
-    if (!text) return message.reply('Eh, manggil gue? Ngomong dong jangan diem aja 😄');
 
     // Typing indicator biar keliatan natural
     await message.channel.sendTyping();
-    const reply = await chat(message.author.id, message.author.username, text);
-    return message.reply(reply);
+
+    // Kalau nimbrung (tidak di-mention), kasih konteks siapa yang lagi ngobrol
+    const contextMsg = isMentioned
+      ? text
+      : `(kamu lagi baca chat, ada orang bilang): ${text}`;
+
+    const reply = await chat(message.author.id, message.author.username, contextMsg, client.user.username);
+
+    // Kalau di-mention, reply langsung. Kalau nimbrung, kirim biasa
+    if (isMentioned) {
+      return message.reply(reply);
+    } else {
+      return message.channel.send(reply);
+    }
   }
 
   if (!message.content.startsWith('!')) return;
