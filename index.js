@@ -1,6 +1,7 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
 const { UnoGame, BOT_ID } = require('./game');
+const { chat, clearHistory } = require('./chat');
 const { initDb, recordGameEnd, getLeaderboard, getServerLeaderboard, getPlayerStats, ensurePlayer, getRank, getNextRank } = require('./db');
 
 const client = new Client({
@@ -15,11 +16,32 @@ const games = new Map();
 
 client.once('ready', () => {
   console.log(`✅ Bot ${client.user.tag} sudah online!`);
-  client.user.setActivity('🃏 UNO by Lx | !uno help');
+  client.user.setActivity('Veronica by Lx | !uno help');
 });
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
+
+  // ── Bot cerewet: aktif kalau di-mention ──────────────────────
+  const isMentioned = message.mentions.has(client.user);
+  if (isMentioned) {
+    // Hapus mention dari pesan
+    const text = message.content.replace(/<@!?\d+>/g, '').trim();
+
+    // Perintah reset memori
+    if (text.toLowerCase() === 'reset' || text.toLowerCase() === 'lupa') {
+      clearHistory(message.author.id);
+      return message.reply('🧹 Oke, gue udah lupa semua yang kita obrolin. Fresh start!');
+    }
+
+    if (!text) return message.reply('Eh, manggil gue? Ngomong dong jangan diem aja 😄');
+
+    // Typing indicator biar keliatan natural
+    await message.channel.sendTyping();
+    const reply = await chat(message.author.id, message.author.username, text);
+    return message.reply(reply);
+  }
+
   if (!message.content.startsWith('!')) return;
 
   const args = message.content.slice(1).trim().split(/ +/);
@@ -45,8 +67,8 @@ client.on('messageCreate', async (message) => {
       const game = new UnoGame(message.channel);
       games.set(channelId, game);
       game.addPlayer(message.author);
-      game.addBot();
-      ensurePlayer(message.author.id, message.author.username);
+      game.addBot(client.user.username);
+      ensurePlayer(message.author.id, message.author.username, message.guild?.id);
       return message.channel.send({ embeds: [game.lobbyEmbed()], components: [game.lobbyButtons()] });
     }
 
@@ -151,10 +173,10 @@ client.on('interactionCreate', async (interaction) => {
     if (id === 'uno_begin') {
       if (!game) return interaction.reply({ content: '❌ Game tidak ditemukan.', ephemeral: true });
       if (game.players[0].id !== interaction.user.id) return interaction.reply({ content: '❌ Hanya host!', ephemeral: true });
-      // Kalau sendirian, otomatis tambah bot
+      // Kalau sendirian, otomatis tambah bot dengan nama asli bot
       if (game.players.length === 1) {
-        game.addBot();
-        await interaction.channel.send('🤖 Tidak ada lawan, **UNO Bot** ikut main!');
+        game.addBot(client.user.username);
+        await interaction.channel.send(`🤖 Tidak ada lawan, **${client.user.username}** ikut main!`);
       }
       await game.startGame();
       await interaction.update({ embeds: [game.lobbyEmbed()], components: [] });
