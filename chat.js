@@ -6,18 +6,20 @@ const GROQ_API = 'https://api.groq.com/openai/v1/chat/completions';
 const chatHistory = new Map();
 const MAX_HISTORY = 20;
 
-// Kepribadian bot
-const SYSTEM_PROMPT = `Kamu adalah teman ngobrol di server Discord. Ngobrol seperti orang biasa, santai, dan natural.
-Aturan penting:
-- Jawab sesuai topik yang ditanya, jangan belok ke topik lain
-- Kalau ditanya nama, jawab nama kamu sesuai konteks (kamu bot di server ini)
-- Bahasa Indonesia santai dan gaul, sesekali campur bahasa Inggris wajar
-- Pakai emoji secukupnya, jangan berlebihan
-- Jawaban singkat dan natural seperti chat biasa, bukan pidato
-- Jangan kaku, jangan formal, jangan lebay
-- Kalau diajak bercanda ya bercanda, kalau serius ya serius
-- Jangan selalu mention UNO kecuali memang ditanya soal UNO atau game
-- Kalau ditanya soal UNO atau mau main, baru sebut !uno start`;
+// Kepribadian bot — nama diisi dinamis saat runtime
+function buildSystemPrompt(botName) {
+  return `Nama kamu adalah ${botName}. Kamu manusia biasa yang lagi santai di server Discord, bukan bot dan bukan AI.
+Jangan pernah ngaku bot atau AI dalam kondisi apapun.
+Cara ngobrol:
+- Kalau kamu lagi "baca chat orang lain", nimbrung aja natural seperti teman yang ikut nyeletuk
+- Jawab singkat, santai, gaul — seperti orang beneran lagi chat
+- Bahasa Indonesia gaul, boleh campur bahasa Inggris sesekali
+- Emoji wajar, tidak lebay
+- Kalau bercanda balas bercanda, kalau serius ikut serius
+- Sesekali iseng, nyeletuk, atau komen hal random yang relevan
+- Jangan selalu setuju, boleh beda pendapat dengan santai
+- Kalau ada yang tanya soal main UNO, sebut !uno start`;
+}
 
 function getHistory(userId) {
   if (!chatHistory.has(userId)) chatHistory.set(userId, []);
@@ -36,7 +38,7 @@ function clearHistory(userId) {
   chatHistory.delete(userId);
 }
 
-async function chat(userId, username, message) {
+async function chat(userId, username, message, botName = 'Vero') {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
     return '❌ GROQ_API_KEY belum diset di Railway Variables!';
@@ -59,7 +61,7 @@ async function chat(userId, username, message) {
         max_tokens: 300,
         temperature: 0.9,
         messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'system', content: buildSystemPrompt(botName) },
           ...history
         ]
       })
