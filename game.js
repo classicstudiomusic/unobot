@@ -105,7 +105,7 @@ class UnoGame {
   }
 
   addPlayer(user) { this.players.push(new Player(user)); }
-  addBot()        { this.players.push(new Player({ id: BOT_ID, username: '🤖 UNO Bot', isBot: true })); }
+  addBot(name)    { this.players.push(new Player({ id: BOT_ID, username: `🤖 ${name || 'UNO Bot'}`, isBot: true })); }
 
   removePlayer(userId) {
     this.players = this.players.filter(p => p.id !== userId);
