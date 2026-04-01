@@ -16,7 +16,7 @@ const games = new Map();
 
 client.once('ready', () => {
   console.log(`✅ Bot ${client.user.tag} sudah online!`);
-  client.user.setActivity('🃏 UNO | !uno help');
+  client.user.setActivity('Veronica by Lx | !uno help');
 });
 
 client.on('messageCreate', async (message) => {
@@ -38,7 +38,7 @@ client.on('messageCreate', async (message) => {
     }
 
     // Typing indicator biar keliatan natural
-    await message.channel.sendTyping();
+    try { await message.channel.sendTyping(); } catch {}
 
     // Kalau nimbrung, kasih konteks tanpa nama biar bot tidak ikut pakai format [nama]
     const contextMsg = isMentioned
