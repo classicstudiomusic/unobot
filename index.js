@@ -16,164 +16,144 @@ const games = new Map();
 
 client.once('ready', () => {
   console.log(`✅ Bot ${client.user.tag} sudah online!`);
-  client.user.setActivity('Veronica by Lx | !uno help');
+  client.user.setActivity('Vero by Lx | !uno help');
 });
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
+  // ── Command !uno — diproses duluan, tidak boleh ditimpa nimbrung ──
+  if (message.content.startsWith('!')) {
+    const args = message.content.slice(1).trim().split(/ +/);
+    const command = args[0].toLowerCase();
+    const channelId = message.channel.id;
+
+    if (command === 'uno') {
+      const sub = args[1]?.toLowerCase();
+
+      if (!sub || sub === 'help') return message.channel.send({ embeds: [helpEmbed()] });
+
+      if (sub === 'start') {
+        if (games.has(channelId)) return message.reply('❌ Sudah ada game aktif di channel ini!');
+        const game = new UnoGame(message.channel);
+        games.set(channelId, game);
+        game.addPlayer(message.author);
+        ensurePlayer(message.author.id, message.author.username, message.guild?.id);
+        return message.channel.send({ embeds: [game.lobbyEmbed()], components: [game.lobbyButtons()] });
+      }
+
+      if (sub === 'solo' || sub === 'bot') {
+        if (games.has(channelId)) return message.reply('❌ Sudah ada game aktif di channel ini!');
+        const game = new UnoGame(message.channel);
+        games.set(channelId, game);
+        game.addPlayer(message.author);
+        game.addBot(client.user.username);
+        ensurePlayer(message.author.id, message.author.username, message.guild?.id);
+        return message.channel.send({ embeds: [game.lobbyEmbed()], components: [game.lobbyButtons()] });
+      }
+
+      if (sub === 'join') {
+        const game = games.get(channelId);
+        if (!game) return message.reply('❌ Tidak ada game. Gunakan `!uno start`.');
+        if (game.started) return message.reply('❌ Game sudah berjalan!');
+        if (game.hasPlayer(message.author.id)) return message.reply('❌ Kamu sudah join!');
+        if (game.players.length >= 10) return message.reply('❌ Game penuh!');
+        game.addPlayer(message.author);
+        ensurePlayer(message.author.id, message.author.username, message.guild?.id);
+        return message.channel.send({ embeds: [game.lobbyEmbed()], components: [game.lobbyButtons()] });
+      }
+
+      if (sub === 'leave') {
+        const game = games.get(channelId);
+        if (!game) return message.reply('❌ Tidak ada game.');
+        if (!game.hasPlayer(message.author.id)) return message.reply('❌ Kamu tidak dalam game ini.');
+        const leavingName = message.author.username;
+        game.removePlayer(message.author.id);
+        if (!game.started) {
+          if (game.players.length === 0) { games.delete(channelId); return message.channel.send('🗑️ Game dibatalkan.'); }
+          return message.channel.send(`👋 **${leavingName}** keluar dari lobby.`);
+        }
+        await message.channel.send(`🚪 **${leavingName}** keluar dari game!`);
+        if (game.players.length === 1) {
+          const winner = game.players[0];
+          const pts = recordGameEnd(winner, [...game.players, { id: message.author.id, name: leavingName, hand: [], saidUno: false }], message.guild?.id);
+          game.started = false;
+          games.delete(channelId);
+          clearTurnTimer(channelId);
+          return message.channel.send({ embeds: [winEmbed(winner, pts, true)] });
+        }
+        if (game.players.length === 0) { games.delete(channelId); return message.channel.send('🗑️ Semua pemain keluar. Game berakhir.'); }
+        if (game.currentIndex >= game.players.length) game.currentIndex = 0;
+        return sendGameState(game, message.channel, message.guild?.id);
+      }
+
+      if (sub === 'stop') {
+        if (!games.has(channelId)) return message.reply('❌ Tidak ada game aktif.');
+        games.delete(channelId);
+        clearTurnTimer(channelId);
+        return message.channel.send('🛑 Game dihentikan!');
+      }
+
+      if (sub === 'hand' || sub === 'kartu') {
+        const game = games.get(channelId);
+        if (!game || !game.started) return message.reply('❌ Tidak ada game aktif.');
+        if (!game.hasPlayer(message.author.id)) return message.reply('❌ Kamu tidak dalam game ini.');
+        try {
+          await message.author.send({ embeds: [game.handEmbed(game.getPlayer(message.author.id))] });
+          return message.reply('📬 Kartumu dikirim via DM!');
+        } catch { return message.reply('❌ Aktifkan DM dari server ini!'); }
+      }
+
+      if (sub === 'rank' || sub === 'ranking' || sub === 'profil') {
+        const target = message.mentions.users.first() || message.author;
+        const stats = getPlayerStats(target.id, message.guild?.id);
+        if (!stats.global) return message.channel.send(`❌ **${target.username}** belum pernah main UNO!`);
+        return message.channel.send({ embeds: [profileEmbed(stats, target)] });
+      }
+
+      if (sub === 'leaderboard' || sub === 'lb' || sub === 'top') {
+        const scope = args[2]?.toLowerCase();
+        if (scope === 'global') {
+          return message.channel.send({ embeds: [leaderboardEmbed(getLeaderboard(10), false)] });
+        }
+        const serverBoard = getServerLeaderboard(message.guild?.id, 10);
+        const embed = serverBoard.length
+          ? leaderboardEmbed(serverBoard, true, message.guild?.name)
+          : leaderboardEmbed(getLeaderboard(10), false);
+        return message.channel.send({ embeds: [embed] });
+      }
+    }
+    return; // command lain selain !uno, abaikan
+  }
+
   // ── Bot cerewet: aktif kalau di-mention ATAU nimbrung random ──
   const isMentioned = message.mentions.has(client.user);
-  const shouldNimbrung = !isMentioned && Math.random() < 0.5; // 50% chance nimbrung
+  const shouldNimbrung = !isMentioned && Math.random() < 0.5;
 
   if (isMentioned || shouldNimbrung) {
-    // Hapus mention dari pesan
     const text = message.content.replace(/<@!?\d+>/g, '').trim();
     if (!text) return;
 
-    // Perintah reset memori (hanya kalau di-mention)
     if (isMentioned && (text.toLowerCase() === 'reset' || text.toLowerCase() === 'lupa')) {
       clearHistory(message.author.id);
       return message.reply('🧹 Oke gue lupa deh semua obrolan kita. Fresh start!');
     }
 
-    // Typing indicator biar keliatan natural
     try { await message.channel.sendTyping(); } catch {}
 
-    // Kalau nimbrung, kasih konteks tanpa nama biar bot tidak ikut pakai format [nama]
-    const contextMsg = isMentioned
-      ? text
-      : `${text}`;
+    const reply = await chat(message.author.id, message.author.username, text, client.user.username);
 
-    const reply = await chat(message.author.id, message.author.username, contextMsg, client.user.username);
-
-    // Kalau di-mention, reply langsung. Kalau nimbrung, kirim biasa
-    if (isMentioned) {
-      return message.reply(reply);
-    } else {
-      return message.channel.send(reply);
+    try {
+      if (isMentioned) {
+        return await message.reply(reply);
+      } else {
+        return await message.channel.send(reply);
+      }
+    } catch (e) {
+      console.error('Gagal kirim pesan nimbrung:', e.message);
     }
   }
 
-  if (!message.content.startsWith('!')) return;
-
-  const args = message.content.slice(1).trim().split(/ +/);
-  const command = args[0].toLowerCase();
-  const channelId = message.channel.id;
-
-  if (command === 'uno') {
-    const sub = args[1]?.toLowerCase();
-
-    if (!sub || sub === 'help') return message.channel.send({ embeds: [helpEmbed()] });
-
-    if (sub === 'start') {
-      if (games.has(channelId)) return message.reply('❌ Sudah ada game aktif di channel ini!');
-      const game = new UnoGame(message.channel);
-      games.set(channelId, game);
-      game.addPlayer(message.author);
-      ensurePlayer(message.author.id, message.author.username, message.guild?.id);
-      return message.channel.send({ embeds: [game.lobbyEmbed()], components: [game.lobbyButtons()] });
-    }
-
-    if (sub === 'solo' || sub === 'bot') {
-      if (games.has(channelId)) return message.reply('❌ Sudah ada game aktif di channel ini!');
-      const game = new UnoGame(message.channel);
-      games.set(channelId, game);
-      game.addPlayer(message.author);
-      game.addBot(client.user.username);
-      ensurePlayer(message.author.id, message.author.username, message.guild?.id);
-      return message.channel.send({ embeds: [game.lobbyEmbed()], components: [game.lobbyButtons()] });
-    }
-
-    if (sub === 'join') {
-      const game = games.get(channelId);
-      if (!game) return message.reply('❌ Tidak ada game. Gunakan `!uno start`.');
-      if (game.started) return message.reply('❌ Game sudah berjalan!');
-      if (game.hasPlayer(message.author.id)) return message.reply('❌ Kamu sudah join!');
-      if (game.players.length >= 10) return message.reply('❌ Game penuh!');
-      game.addPlayer(message.author);
-      ensurePlayer(message.author.id, message.author.username, message.guild?.id);
-      return message.channel.send({ embeds: [game.lobbyEmbed()], components: [game.lobbyButtons()] });
-    }
-
-    if (sub === 'leave') {
-      const game = games.get(channelId);
-      if (!game) return message.reply('❌ Tidak ada game.');
-      if (!game.hasPlayer(message.author.id)) return message.reply('❌ Kamu tidak dalam game ini.');
-
-      const leavingName = message.author.username;
-      game.removePlayer(message.author.id);
-
-      // Kalau game belum mulai
-      if (!game.started) {
-        if (game.players.length === 0) { games.delete(channelId); return message.channel.send('🗑️ Game dibatalkan.'); }
-        return message.channel.send(`👋 **${leavingName}** keluar dari lobby.`);
-      }
-
-      // Kalau game sudah berjalan
-      await message.channel.send(`🚪 **${leavingName}** keluar dari game!`);
-
-      // Kalau tinggal 1 pemain → menang otomatis
-      if (game.players.length === 1) {
-        const winner = game.players[0];
-        const pts = recordGameEnd(winner, [...game.players, { id: message.author.id, name: leavingName, hand: [], saidUno: false }], message.guild?.id);
-        game.started = false;
-        games.delete(channelId);
-        clearTurnTimer(channelId);
-        return message.channel.send({ embeds: [winEmbed(winner, pts, true)] });
-      }
-
-      // Kalau tinggal 0 (semua leave)
-      if (game.players.length === 0) {
-        games.delete(channelId);
-        return message.channel.send('🗑️ Semua pemain keluar. Game berakhir.');
-      }
-
-      // Kalau yang leave adalah giliran sekarang, skip ke berikutnya
-      if (game.currentIndex >= game.players.length) {
-        game.currentIndex = 0;
-      }
-
-      return sendGameState(game, message.channel, message.guild?.id);
-    }
-
-    if (sub === 'stop') {
-      if (!games.has(channelId)) return message.reply('❌ Tidak ada game aktif.');
-      games.delete(channelId);
-      clearTurnTimer(channelId);
-      return message.channel.send('🛑 Game dihentikan!');
-    }
-
-    if (sub === 'hand' || sub === 'kartu') {
-      const game = games.get(channelId);
-      if (!game || !game.started) return message.reply('❌ Tidak ada game aktif.');
-      if (!game.hasPlayer(message.author.id)) return message.reply('❌ Kamu tidak dalam game ini.');
-      try {
-        await message.author.send({ embeds: [game.handEmbed(game.getPlayer(message.author.id))] });
-        return message.reply('📬 Kartumu dikirim via DM!');
-      } catch { return message.reply('❌ Aktifkan DM dari server ini!'); }
-    }
-
-    if (sub === 'rank' || sub === 'ranking' || sub === 'profil') {
-      const target = message.mentions.users.first() || message.author;
-      const stats = getPlayerStats(target.id, message.guild?.id);
-      if (!stats.global) return message.channel.send(`❌ **${target.username}** belum pernah main UNO!`);
-      return message.channel.send({ embeds: [profileEmbed(stats, target)] });
-    }
-
-    if (sub === 'leaderboard' || sub === 'lb' || sub === 'top') {
-      const scope = args[2]?.toLowerCase();
-      if (scope === 'global') {
-        return message.channel.send({ embeds: [leaderboardEmbed(getLeaderboard(10), false)] });
-      }
-      // Default: server leaderboard
-      const serverBoard = getServerLeaderboard(message.guild?.id, 10);
-      const embed = serverBoard.length
-        ? leaderboardEmbed(serverBoard, true, message.guild?.name)
-        : leaderboardEmbed(getLeaderboard(10), false);
-      return message.channel.send({ embeds: [embed] });
-    }
-  }
 });
 
 client.on('interactionCreate', async (interaction) => {
