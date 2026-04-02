@@ -16,7 +16,7 @@ const games = new Map();
 
 client.once('ready', () => {
   console.log(`✅ Bot ${client.user.tag} sudah online!`);
-  client.user.setActivity('🃏 UNO | !uno help');
+  client.user.setActivity('Veronica by Lx | !uno help');
 });
 
 client.on('messageCreate', async (message) => {
