@@ -16,10 +16,11 @@ const games = new Map();
 
 client.once('ready', () => {
   console.log(`✅ Bot ${client.user.tag} sudah online!`);
-  client.user.setActivity('Vero by Lx | !uno help');
+  client.user.setActivity('🃏 UNO | !uno help');
 });
 
 client.on('messageCreate', async (message) => {
+  try {
   if (message.author.bot) return;
 
   // ── Command !uno — diproses duluan, tidak boleh ditimpa nimbrung ──
@@ -154,9 +155,11 @@ client.on('messageCreate', async (message) => {
     }
   }
 
+  } catch(e) { console.error("⚠️ messageCreate error:", e?.message || e); }
 });
 
 client.on('interactionCreate', async (interaction) => {
+  try {
   const channelId = interaction.channelId;
   const game = games.get(channelId);
 
@@ -278,6 +281,7 @@ client.on('interactionCreate', async (interaction) => {
     }
     return sendGameState(game, interaction.channel, interaction.guild?.id);
   }
+  } catch(e) { console.error("⚠️ interactionCreate error:", e?.message || e); }
 });
 
 // Map untuk menyimpan timer per channel
@@ -499,6 +503,17 @@ function helpEmbed() {
 
 const TOKEN = process.env.DISCORD_TOKEN;
 if (!TOKEN) { console.error('❌ Set DISCORD_TOKEN di file .env'); process.exit(1); }
+
+// ── Global error handler — biar bot tidak crash karena error kecil ──
+process.on('unhandledRejection', (err) => {
+  console.error('⚠️ Unhandled rejection (ditangkap, bot tetap jalan):', err?.message || err);
+});
+process.on('uncaughtException', (err) => {
+  console.error('⚠️ Uncaught exception (ditangkap, bot tetap jalan):', err?.message || err);
+});
+client.on('error', (err) => {
+  console.error('⚠️ Discord client error:', err?.message || err);
+});
 
 // Inisialisasi database dulu, baru login
 initDb()
